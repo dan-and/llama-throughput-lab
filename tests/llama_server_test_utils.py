@@ -15,6 +15,24 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8080
 
 
+def _close_response(resp):
+    """Close urllib responses (and their underlying sockets) safely."""
+    if resp is None:
+        return
+    fp = getattr(resp, "fp", None)
+    if fp is not None:
+        try:
+            fp.close()
+        except Exception:
+            pass
+    close = getattr(resp, "close", None)
+    if close is not None:
+        try:
+            close()
+        except Exception:
+            pass
+
+
 def _find_llama_cpp_dir():
     search_roots = [REPO_ROOT, *REPO_ROOT.parents]
     for base in search_roots:
@@ -96,11 +114,13 @@ def _wait_for_server(host, port, timeout_s=None):
             with urllib.request.urlopen(health_url, timeout=2) as resp:
                 if resp.status == 200:
                     resp.read()
-                    resp.close()
+                    _close_response(resp)
                     return
         except urllib.error.HTTPError as exc:
             if exc.code in {200, 404}:
+                _close_response(exc)
                 return
+            _close_response(exc)
             last_error = exc
         except Exception as exc:
             last_error = exc
@@ -109,11 +129,13 @@ def _wait_for_server(host, port, timeout_s=None):
             with urllib.request.urlopen(models_url, timeout=2) as resp:
                 if resp.status == 200:
                     resp.read()
-                    resp.close()
+                    _close_response(resp)
                     return
         except urllib.error.HTTPError as exc:
             if exc.code in {200, 404}:
+                _close_response(exc)
                 return
+            _close_response(exc)
             last_error = exc
         except Exception as exc:
             last_error = exc
@@ -150,14 +172,16 @@ def _wait_for_completion_ready(host, port, timeout_s=120):
             with urllib.request.urlopen(request, timeout=5) as resp:
                 if resp.status == 200:
                     resp.read()
-                    resp.close()
+                    _close_response(resp)
                     return
         except urllib.error.HTTPError as exc:
             if exc.code == 503:
+                _close_response(exc)
                 time.sleep(0.5)
                 continue
             with exc:
                 data = exc.read().decode("utf-8", errors="replace")
+                _close_response(exc)
             raise RuntimeError(f"HTTP error {exc.code}: {data}") from exc
         except Exception as exc:
             time.sleep(0.5)
@@ -375,11 +399,12 @@ def post_json(url, payload, timeout=120):
     try:
         with urllib.request.urlopen(request, timeout=timeout) as resp:
             data = resp.read().decode("utf-8")
-            resp.close()
+            _close_response(resp)
             return json.loads(data)
     except urllib.error.HTTPError as exc:
         with exc:
             data = exc.read().decode("utf-8", errors="replace")
+            _close_response(exc)
         raise RuntimeError(f"HTTP error {exc.code}: {data}") from exc
 
 

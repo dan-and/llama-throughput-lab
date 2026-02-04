@@ -271,6 +271,10 @@ class AppState:
         self.concurrency_list = os.environ.get(
             "LLAMA_CONCURRENCY_LIST", "1,2,4,8,16,32,64,128,256,512,1024"
         )
+        self.instances_list = os.environ.get("LLAMA_INSTANCES_LIST", "2,4,8,16")
+        self.parallel_list = os.environ.get(
+            "LLAMA_PARALLEL_LIST", "1,2,4,8,16,32,64"
+        )
         self.rr_instances = int(os.environ.get("LLAMA_SERVER_INSTANCES", "2"))
         self.rr_parallel = int(os.environ.get("LLAMA_PARALLEL", "16"))
         self.rr_base_port = int(os.environ.get("LLAMA_SERVER_BASE_PORT", "9000"))
@@ -333,9 +337,9 @@ def edit_n_predict(state):
     selection, code = run_dialog(
         [
             "--title",
-            "Tokens (single test)",
+            "Test Request-Size",
             "--inputbox",
-            "Tokens to generate per request (single and non-sweep tests):",
+            "Tokens to generate per request.\nUsed in: Tests 1, 2, 3, 4, 5, 6.",
             "10",
             "60",
             current,
@@ -352,8 +356,8 @@ def edit_max_tokens_list(state):
             "--title",
             "Tokens (sweep tests)",
             "--inputbox",
-            "Comma-separated token counts for sweep (e.g. 128,256,512,1024):",
-            "10",
+            "Comma-separated token counts for sweep (e.g. 128,256,512,1024).\nUsed in: Test 5 (Round-robin sweep).",
+            "11",
             "60",
             current,
         ]
@@ -369,14 +373,51 @@ def edit_concurrency_list(state):
             "--title",
             "List of concurrent tests (sweeps)",
             "--inputbox",
-            "Comma-separated concurrencies for sweep (e.g. 1,4,8,16,32,64):",
-            "10",
+            "Comma-separated concurrencies for sweep (e.g. 1,4,8,16,32,64).\nUsed in: Tests 5, 6 (Round-robin sweep, Full sweep).",
+            "11",
             "60",
             current,
         ]
     )
     if code == 0 and selection.strip():
         state.concurrency_list = selection.strip()
+
+
+def edit_instances_list(state):
+    current = state.instances_list or "2,4,8,16"
+    selection, code = run_dialog(
+        [
+            "--title",
+            "Full sweep: Instances",
+            "--inputbox",
+            "How many llama-server instances should be started?\n"
+            "Comma-separated list (e.g. 2,4,8,16). Used in: Test 6 (Full sweep).",
+            "12",
+            "70",
+            current,
+        ]
+    )
+    if code == 0 and selection.strip():
+        state.instances_list = selection.strip()
+
+
+def edit_parallel_list(state):
+    current = state.parallel_list or "1,2,4,8,16,32,64"
+    selection, code = run_dialog(
+        [
+            "--title",
+            "Full sweep: Parallel list",
+            "--inputbox",
+            "How many parallel sessions llama-server should support "
+            "(context size will be divided by the number of parallel sessions).\n"
+            "Comma-separated list (e.g. 1,2,4,8,16,32,64). Used in: Test 6 (Full sweep).",
+            "14",
+            "70",
+            current,
+        ]
+    )
+    if code == 0 and selection.strip():
+        state.parallel_list = selection.strip()
 
 
 def tokens_menu(state):
@@ -388,17 +429,21 @@ def tokens_menu(state):
             "--title",
             "Tokens and sweep",
             "--menu",
-            "Single/sweep tokens, concurrency list.",
-            "18",
+            "Single/sweep tokens, concurrency, full sweep instances/parallel.",
+            "20",
             "70",
-            "4",
+            "7",
             "1",
-            f"Single test: {state.n_predict}",
+            f"Test Request-Size: {state.n_predict}",
             "2",
             f"Sweep tokens: {state.max_tokens_list}",
             "3",
             f"List of concurrent tests: {state.concurrency_list}",
             "4",
+            f"Full sweep instances: {state.instances_list}",
+            "5",
+            f"Full sweep parallel list: {state.parallel_list}",
+            "6",
             "Back",
         ]
         choice, code = run_dialog(menu)
@@ -411,6 +456,10 @@ def tokens_menu(state):
         elif choice == "3":
             edit_concurrency_list(state)
         elif choice == "4":
+            edit_instances_list(state)
+        elif choice == "5":
+            edit_parallel_list(state)
+        elif choice == "6":
             break
 
 
@@ -447,6 +496,10 @@ def run_selected(state):
         overrides["LLAMA_MAX_TOKENS_LIST"] = state.max_tokens_list
     if state.test_key in ("5", "6") and "LLAMA_CONCURRENCY_LIST" not in overrides:
         overrides["LLAMA_CONCURRENCY_LIST"] = state.concurrency_list
+    if state.test_key == "6" and "LLAMA_INSTANCES_LIST" not in overrides:
+        overrides["LLAMA_INSTANCES_LIST"] = state.instances_list
+    if state.test_key == "6" and "LLAMA_PARALLEL_LIST" not in overrides:
+        overrides["LLAMA_PARALLEL_LIST"] = state.parallel_list
     # Only inject LLAMA_PARALLEL for round-robin test/sweep (3, 5). Single/concurrent (1, 2)
     # and threads sweep (4) use test default 1 to avoid changing behavior and memory.
     if state.test_key in ("3", "5") and "LLAMA_PARALLEL" not in overrides:
@@ -470,12 +523,9 @@ def run_selected(state):
     print(f"  Context per session (--ctx-size): {ctx_effective}{ctx_note}")
     print(f"  Sweep tokens:                  {overrides.get('LLAMA_MAX_TOKENS_LIST', state.max_tokens_list)}")
     print(f"  List of concurrent tests:     {overrides.get('LLAMA_CONCURRENCY_LIST', state.concurrency_list)}")
-    parallel_display = overrides.get("LLAMA_PARALLEL")
-    if parallel_display is None and state.test_key in ("1", "2", "4"):
-        parallel_display = "1 (test default)"
-    elif parallel_display is None:
-        parallel_display = str(state.rr_parallel)
-    print(f"  Parallel (server --parallel): {parallel_display}")
+    if state.test_key == "6":
+        print(f"  Full sweep instances:         {overrides.get('LLAMA_INSTANCES_LIST', state.instances_list)}")
+        print(f"  Full sweep parallel list:    {overrides.get('LLAMA_PARALLEL_LIST', state.parallel_list)}")
     if state.env_overrides:
         print(f"Env:   {state.env_overrides}")
     print("--------------------------------")
